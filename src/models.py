@@ -15,8 +15,18 @@ class EstadoSesion(str, Enum):
     ABIERTA_CORRECTA_PENDIENTE_CONFIRMACION = "ABIERTA_CORRECTA_PENDIENTE_CONFIRMACION"
     CERRADA_EXITOSA = "CERRADA_EXITOSA"
     CERRADA_POR_INACTIVIDAD = "CERRADA_POR_INACTIVIDAD"
+    CERRADA_POR_CONFIRMACION_EXPIRADA = "CERRADA_POR_CONFIRMACION_EXPIRADA"
     CERRADA_POR_MAXIMO_INTENTOS = "CERRADA_POR_MAXIMO_INTENTOS"
     CERRADA_POR_ERROR_TECNICO = "CERRADA_POR_ERROR_TECNICO"
+
+
+ESTADOS_SESION_CERRADOS = (
+    EstadoSesion.CERRADA_EXITOSA,
+    EstadoSesion.CERRADA_POR_INACTIVIDAD,
+    EstadoSesion.CERRADA_POR_CONFIRMACION_EXPIRADA,
+    EstadoSesion.CERRADA_POR_MAXIMO_INTENTOS,
+    EstadoSesion.CERRADA_POR_ERROR_TECNICO,
+)
 
 
 ColorCaneca = Literal["blanca", "verde", "negra"]
@@ -29,17 +39,9 @@ class Caneca:
     id_caneca: str
     area: str
     color_caneca: ColorCaneca
-    tipos_residuo_permitidos: list[str]
     estado_caneca: str = "activa"
     latitud: float | None = None
     longitud: float | None = None
-
-
-@dataclass
-class ReglaResiduo:
-    tipo_residuo: str
-    caneca_recomendada: ColorCaneca
-    mensaje_educativo: str
 
 
 @dataclass
@@ -82,7 +84,6 @@ class RegistroIntento:
     id_caneca: str
     caneca_qr: ColorCaneca
     area: str
-    tipos_residuo_permitidos: list[str]
     prediccion_ia: ColorCaneca | None
     nivel_confianza: float | None
     explicacion_breve: str | None

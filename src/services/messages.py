@@ -1,6 +1,7 @@
 """Plantillas de mensajes al colaborador."""
 
-from src.models import ColorCaneca
+from src.config import settings
+from src.models import ColorCaneca, EstadoSesion
 
 
 def mensaje_correcto(prediccion: ColorCaneca, area: str, confianza: float, explicacion: str) -> str:
@@ -33,7 +34,7 @@ def mensaje_incorrecto(
         f"Segregar correctamente evita pérdidas de material reciclable.\n\n"
         f"📊 Confianza: {pct}%\n"
         f"💡 {explicacion}{extra}\n\n"
-        "Envía otra foto del residuo o escanea el QR de la caneca correcta."
+        "Escanea el QR de la caneca correcta para reintentar (no necesitas enviar otra foto)."
     )
 
 
@@ -53,8 +54,32 @@ def mensaje_bienvenida(id_caneca: str, area: str, color: ColorCaneca) -> str:
     )
 
 
-def mensaje_sesion_cerrada(razon: str) -> str:
-    return f"🔒 Sesión cerrada: {razon}\n\nEscanea un QR de caneca para iniciar una nueva sesión."
+def mensaje_reintento_caneca(id_caneca: str, area: str, color: ColorCaneca) -> str:
+    return (
+        f"🔄 Caneca actualizada: **{area}** (caneca {color}).\n"
+        f"Caneca: `{id_caneca}`\n\n"
+        "Revisando con la clasificación de tu foto anterior…"
+    )
+
+
+def razon_cierre(estado: EstadoSesion) -> str:
+    razones = {
+        EstadoSesion.CERRADA_POR_INACTIVIDAD: "inactividad",
+        EstadoSesion.CERRADA_POR_CONFIRMACION_EXPIRADA: (
+            f"no confirmaste el depósito a tiempo ({settings.tiempo_confirmacion_min} min)"
+        ),
+        EstadoSesion.CERRADA_POR_MAXIMO_INTENTOS: "máximo de intentos alcanzado",
+        EstadoSesion.CERRADA_POR_ERROR_TECNICO: "error técnico",
+    }
+    return razones.get(estado, estado.value)
+
+
+def mensaje_sesion_cerrada(estado: EstadoSesion | str) -> str:
+    if isinstance(estado, EstadoSesion):
+        razon = razon_cierre(estado)
+    else:
+        razon = estado
+    return f"🔒 Sesión cerrada: {razon}.\n\nEscanea un QR de caneca para iniciar una nueva sesión."
 
 
 def mensaje_ayuda_canecas(canecas_info: list[str]) -> str:

@@ -1,21 +1,13 @@
--- SmartSort EcoEnterprise IoT 2.0 — Esquema Supabase/PostgreSQL
+-- ECOPUNTOS IA — Esquema Supabase/PostgreSQL
 
 CREATE TABLE IF NOT EXISTS catalogo_canecas (
     id_caneca TEXT PRIMARY KEY,
     area TEXT NOT NULL,
     color_caneca TEXT NOT NULL CHECK (color_caneca IN ('blanca', 'verde', 'negra')),
-    tipos_residuo_permitidos TEXT[] NOT NULL,
     estado_caneca TEXT NOT NULL DEFAULT 'activa' CHECK (estado_caneca IN ('activa', 'inactiva')),
     latitud DOUBLE PRECISION,
     longitud DOUBLE PRECISION,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS reglas_residuos (
-    id SERIAL PRIMARY KEY,
-    tipo_residuo TEXT NOT NULL UNIQUE,
-    caneca_recomendada TEXT NOT NULL CHECK (caneca_recomendada IN ('blanca', 'verde', 'negra')),
-    mensaje_educativo TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sesiones (
@@ -38,7 +30,6 @@ CREATE TABLE IF NOT EXISTS registro_intentos (
     id_caneca TEXT NOT NULL REFERENCES catalogo_canecas(id_caneca),
     caneca_qr TEXT NOT NULL,
     area TEXT NOT NULL,
-    tipos_residuo_permitidos TEXT[] NOT NULL,
     prediccion_ia TEXT,
     nivel_confianza DOUBLE PRECISION,
     explicacion_breve TEXT,
@@ -57,7 +48,6 @@ CREATE INDEX IF NOT EXISTS idx_registro_intentos_sesion ON registro_intentos(id_
 CREATE INDEX IF NOT EXISTS idx_registro_intentos_colaborador ON registro_intentos(id_colaborador);
 CREATE INDEX IF NOT EXISTS idx_registro_intentos_fecha ON registro_intentos(fecha_hora_evento);
 
--- Vista para KPIs básicos
 CREATE OR REPLACE VIEW v_kpi_resumen AS
 SELECT
     COUNT(DISTINCT id_sesion) AS sesiones_totales,

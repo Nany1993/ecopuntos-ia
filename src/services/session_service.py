@@ -30,6 +30,12 @@ class ResultadoFlujo:
     puntos_totales: int = 0
 
 
+_ESTADOS_SESION_EN_PROGRESO = (
+    EstadoSesion.ABIERTA_ESPERANDO_FOTO,
+    EstadoSesion.ABIERTA_CLASIFICACION_INCORRECTA,
+)
+
+
 class SessionService:
     def __init__(self, db: Database | None = None):
         self.db = db or get_database()
@@ -42,9 +48,22 @@ class SessionService:
                 sesion=Sesion.nueva(id_colaborador, id_caneca),
             )
 
-        sesion_activa = self.db.get_sesion_activa_colaborador(id_colaborador)
+        sesion_activa, cierre = self._obtener_sesion_validada(id_colaborador)
+        if cierre:
+            return cierre
+
         if sesion_activa:
-            self._cerrar_sesion(sesion_activa, EstadoSesion.CERRADA_POR_INACTIVIDAD)
+            if sesion_activa.estado_sesion == EstadoSesion.ABIERTA_CORRECTA_PENDIENTE_CONFIRMACION:
+                return ResultadoFlujo(
+                    mensaje=(
+                        "Tienes una clasificación correcta pendiente. "
+                        "Responde *sí* o *no* para confirmar si ya depositaste el residuo."
+                    ),
+                    sesion=sesion_activa,
+                    requiere_confirmacion=True,
+                )
+            if sesion_activa.estado_sesion in _ESTADOS_SESION_EN_PROGRESO:
+                return self.cambiar_caneca(id_colaborador, id_caneca)
 
         sesion = Sesion.nueva(id_colaborador, id_caneca)
         sesion.id_caneca_actual = id_caneca
@@ -73,23 +92,13 @@ class SessionService:
         latencia_ia_ms: int = 0,
         id_caneca_override: str | None = None,
     ) -> ResultadoFlujo:
-        sesion = self.db.get_sesion_activa_colaborador(id_colaborador)
+        sesion, cierre = self._obtener_sesion_validada(id_colaborador)
+        if cierre:
+            return cierre
         if not sesion:
             return ResultadoFlujo(
                 mensaje="Escanea primero el QR de una caneca para iniciar sesión.",
                 sesion=Sesion.nueva(id_colaborador, "UNKNOWN"),
-            )
-
-        sesion = self._validar_tiempo_sesion(sesion)
-        if sesion.estado_sesion in (
-            EstadoSesion.CERRADA_POR_INACTIVIDAD,
-            EstadoSesion.CERRADA_POR_MAXIMO_INTENTOS,
-            EstadoSesion.CERRADA_POR_ERROR_TECNICO,
-        ):
-            self.db.save_sesion(sesion)
-            return ResultadoFlujo(
-                mensaje=messages.mensaje_sesion_cerrada(sesion.estado_sesion.value),
-                sesion=sesion,
             )
 
         id_caneca = id_caneca_override or sesion.id_caneca_actual or sesion.id_caneca_inicial
@@ -133,7 +142,9 @@ class SessionService:
 
                 if sesion.numero_intento_actual >= settings.maximo_intentos:
                     sesion.estado_sesion = EstadoSesion.CERRADA_POR_MAXIMO_INTENTOS
-                    msg += "\n\n" + messages.mensaje_sesion_cerrada("máximo de intentos alcanzado")
+                    msg += "\n\n" + messages.mensaje_sesion_cerrada(
+                        EstadoSesion.CERRADA_POR_MAXIMO_INTENTOS
+                    )
 
             intento = RegistroIntento(
                 id_sesion=sesion.id_sesion,
@@ -143,7 +154,6 @@ class SessionService:
                 id_caneca=id_caneca,
                 caneca_qr=caneca.color_caneca,
                 area=caneca.area,
-                tipos_residuo_permitidos=caneca.tipos_residuo_permitidos,
                 prediccion_ia=clasificacion.prediccion_ia,
                 nivel_confianza=clasificacion.nivel_confianza,
                 explicacion_breve=clasificacion.explicacion_breve,
@@ -167,7 +177,6 @@ class SessionService:
                 id_caneca=id_caneca,
                 caneca_qr=caneca.color_caneca,
                 area=caneca.area,
-                tipos_residuo_permitidos=caneca.tipos_residuo_permitidos,
                 prediccion_ia=None,
                 nivel_confianza=None,
                 explicacion_breve=None,
@@ -184,7 +193,11 @@ class SessionService:
             sesion.actualizada_en = datetime.utcnow()
             self.db.save_sesion(sesion)
             return ResultadoFlujo(
-                mensaje=messages.mensaje_error_tecnico(intento.codigo_error or "IA_ERROR"),
+                mensaje=(
+                    messages.mensaje_error_tecnico(intento.codigo_error or "IA_ERROR")
+                    + "\n\n"
+                    + messages.mensaje_sesion_cerrada(EstadoSesion.CERRADA_POR_ERROR_TECNICO)
+                ),
                 sesion=sesion,
                 intento=intento,
             )
@@ -198,8 +211,7 @@ class SessionService:
             sesion=sesion,
             intento=intento,
             requiere_confirmacion=requiere_confirmacion,
-            requiere_foto=not requiere_confirmacion
-            and sesion.estado_sesion == EstadoSesion.ABIERTA_CLASIFICACION_INCORRECTA,
+            requiere_foto=False,
         )
 
     def procesar_foto(
@@ -212,7 +224,9 @@ class SessionService:
         try:
             clasificacion, latencia = self.clasificar_con_agente_ia(image_bytes, mime_type)
         except Exception as exc:
-            sesion = self.db.get_sesion_activa_colaborador(id_colaborador)
+            sesion, cierre = self._obtener_sesion_validada(id_colaborador)
+            if cierre:
+                return cierre
             if not sesion:
                 return ResultadoFlujo(
                     mensaje="Escanea primero el QR de una caneca para iniciar sesión.",
@@ -228,7 +242,6 @@ class SessionService:
                 id_caneca=id_caneca_override or sesion.id_caneca_actual or sesion.id_caneca_inicial,
                 caneca_qr="",
                 area="",
-                tipos_residuo_permitidos=[],
                 prediccion_ia=None,
                 nivel_confianza=None,
                 explicacion_breve=None,
@@ -244,7 +257,11 @@ class SessionService:
             self.db.save_intento(intento)
             self.db.save_sesion(sesion)
             return ResultadoFlujo(
-                mensaje=messages.mensaje_error_tecnico(intento.codigo_error or "IA_ERROR"),
+                mensaje=(
+                    messages.mensaje_error_tecnico(intento.codigo_error or "IA_ERROR")
+                    + "\n\n"
+                    + messages.mensaje_sesion_cerrada(EstadoSesion.CERRADA_POR_ERROR_TECNICO)
+                ),
                 sesion=sesion,
                 intento=intento,
             )
@@ -257,7 +274,9 @@ class SessionService:
         )
 
     def confirmar_deposito(self, id_colaborador: str, confirmado: bool) -> ResultadoFlujo:
-        sesion = self.db.get_sesion_activa_colaborador(id_colaborador)
+        sesion, cierre = self._obtener_sesion_validada(id_colaborador)
+        if cierre:
+            return cierre
         if not sesion:
             return ResultadoFlujo(
                 mensaje="No hay sesión activa.",
@@ -308,7 +327,9 @@ class SessionService:
         return formatear_ranking(self.db.get_ranking_puntos(limit))
 
     def cambiar_caneca(self, id_colaborador: str, id_caneca: str) -> ResultadoFlujo:
-        sesion = self.db.get_sesion_activa_colaborador(id_colaborador)
+        sesion, cierre = self._obtener_sesion_validada(id_colaborador)
+        if cierre:
+            return cierre
         if not sesion:
             return self.iniciar_sesion(id_colaborador, id_caneca)
 
@@ -318,6 +339,22 @@ class SessionService:
                 mensaje=messages.mensaje_error_tecnico("QR_NO_EXISTE"),
                 sesion=sesion,
             )
+
+        if sesion.estado_sesion == EstadoSesion.ABIERTA_CLASIFICACION_INCORRECTA:
+            clasificacion = self._clasificacion_ultimo_intento(sesion.id_sesion)
+            if clasificacion:
+                resultado = self.emitir_veredicto(
+                    id_colaborador,
+                    clasificacion,
+                    latencia_ia_ms=0,
+                    id_caneca_override=id_caneca,
+                )
+                resultado.mensaje = (
+                    messages.mensaje_reintento_caneca(id_caneca, caneca.area, caneca.color_caneca)
+                    + "\n\n"
+                    + resultado.mensaje
+                )
+                return resultado
 
         sesion.id_caneca_actual = id_caneca
         sesion.estado_sesion = EstadoSesion.ABIERTA_ESPERANDO_FOTO
@@ -335,22 +372,70 @@ class SessionService:
         lineas = [f"{c.id_caneca} — {c.area} ({c.color_caneca})" for c in canecas]
         return messages.mensaje_ayuda_canecas(lineas)
 
+    def cerrar_sesiones_expiradas(self) -> list[tuple[str, str]]:
+        """Cierra sesiones vencidas y retorna notificaciones para enviar por Telegram."""
+        notificaciones: list[tuple[str, str]] = []
+        for sesion in self.db.list_sesiones_activas():
+            motivo = self._motivo_expiracion(sesion)
+            if not motivo:
+                continue
+            self._cerrar_sesion(sesion, motivo)
+            notificaciones.append(
+                (sesion.id_colaborador, messages.mensaje_sesion_cerrada(motivo))
+            )
+        return notificaciones
+
+    def _obtener_sesion_validada(
+        self, id_colaborador: str
+    ) -> tuple[Sesion | None, ResultadoFlujo | None]:
+        sesion = self.db.get_sesion_activa_colaborador(id_colaborador)
+        if not sesion:
+            return None, None
+
+        motivo = self._motivo_expiracion(sesion)
+        if motivo:
+            self._cerrar_sesion(sesion, motivo)
+            return None, ResultadoFlujo(
+                mensaje=messages.mensaje_sesion_cerrada(motivo),
+                sesion=sesion,
+            )
+        return sesion, None
+
     def _buscar_caneca_por_color(self, color: str):
         canecas = self.db.list_canecas(color)
         return canecas[0] if canecas else None
 
-    def _validar_tiempo_sesion(self, sesion: Sesion) -> Sesion:
+    def _clasificacion_ultimo_intento(self, id_sesion: str) -> ClasificacionIA | None:
+        intento = self.db.get_ultimo_intento_sesion(id_sesion)
+        if not intento or not intento.prediccion_ia or intento.resultado_intento != "incorrecto":
+            return None
+        return ClasificacionIA(
+            prediccion_ia=intento.prediccion_ia,
+            nivel_confianza=intento.nivel_confianza or 0.0,
+            explicacion_breve=intento.explicacion_breve or "",
+            proveedor_ia=intento.proveedor_ia or "reintento",
+            respaldo_activado=intento.respaldo_activado,
+        )
+
+    def _motivo_expiracion(self, sesion: Sesion) -> EstadoSesion | None:
         ahora = datetime.utcnow()
         max_sesion = timedelta(minutes=settings.tiempo_maximo_sesion_min)
         max_inactividad = timedelta(seconds=settings.tiempo_reintento_seg)
+        max_confirmacion = timedelta(minutes=settings.tiempo_confirmacion_min)
+        inactivo = ahora - sesion.actualizada_en
 
         if ahora - sesion.creada_en > max_sesion:
-            return self._cerrar_sesion(sesion, EstadoSesion.CERRADA_POR_INACTIVIDAD)
+            return EstadoSesion.CERRADA_POR_INACTIVIDAD
 
-        if ahora - sesion.actualizada_en > max_inactividad:
-            return self._cerrar_sesion(sesion, EstadoSesion.CERRADA_POR_INACTIVIDAD)
+        if sesion.estado_sesion == EstadoSesion.ABIERTA_CORRECTA_PENDIENTE_CONFIRMACION:
+            if inactivo > max_confirmacion:
+                return EstadoSesion.CERRADA_POR_CONFIRMACION_EXPIRADA
+            return None
 
-        return sesion
+        if inactivo > max_inactividad:
+            return EstadoSesion.CERRADA_POR_INACTIVIDAD
+
+        return None
 
     def _cerrar_sesion(self, sesion: Sesion, estado: EstadoSesion) -> Sesion:
         sesion.estado_sesion = estado

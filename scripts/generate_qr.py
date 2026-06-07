@@ -5,21 +5,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import qrcode
-
 from src.config import settings
 from src.database import get_database
-
-
-def generar_qr(id_caneca: str, output_dir: Path) -> Path:
-    url = f"{settings.telegram_deep_link_base}?start={id_caneca}"
-    qr = qrcode.QRCode(version=1, box_size=10, border=4)
-    qr.add_data(url)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    path = output_dir / f"qr_{id_caneca}.png"
-    img.save(path)
-    return path
+from src.services.qr_codes import generar_qr_caneca as generar_qr
 
 
 def main() -> None:

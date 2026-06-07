@@ -151,6 +151,95 @@ def distribucion_resultados() -> pd.DataFrame:
     )
 
 
+def _where_filtros(
+    area: str | None = None,
+    id_colaborador: str | None = None,
+    prefijo: str = "",
+) -> tuple[str, list]:
+    p = f"{prefijo}." if prefijo else ""
+    conditions: list[str] = []
+    params: list[str] = []
+    if area:
+        conditions.append(f"{p}area = ?")
+        params.append(area)
+    if id_colaborador:
+        conditions.append(f"{p}id_colaborador = ?")
+        params.append(id_colaborador)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return where, params
+
+
+def ranking_resumen() -> dict:
+    df = _query(
+        """
+        SELECT
+            (SELECT COUNT(DISTINCT id_colaborador) FROM registro_intentos) AS personas,
+            (SELECT COALESCE(SUM(puntos_totales), 0) FROM puntos_colaborador) AS ecopuntos,
+            SUM(CASE WHEN resultado_intento = 'correcto' THEN 1 ELSE 0 END) AS aciertos,
+            SUM(CASE WHEN resultado_intento = 'incorrecto' THEN 1 ELSE 0 END) AS desaciertos
+        FROM registro_intentos
+        """
+    )
+    row = df.iloc[0]
+    return {
+        "personas": int(row["personas"] or 0),
+        "ecopuntos": int(row["ecopuntos"] or 0),
+        "aciertos": int(row["aciertos"] or 0),
+        "desaciertos": int(row["desaciertos"] or 0),
+    }
+
+
+def aciertos_desaciertos_por_caneca(
+    area: str | None = None,
+    id_colaborador: str | None = None,
+) -> pd.DataFrame:
+    where, params = _where_filtros(area, id_colaborador)
+    return _query(
+        f"""
+        SELECT
+            caneca_qr,
+            SUM(CASE WHEN resultado_intento = 'correcto' THEN 1 ELSE 0 END) AS aciertos,
+            SUM(CASE WHEN resultado_intento = 'incorrecto' THEN 1 ELSE 0 END) AS desaciertos
+        FROM registro_intentos
+        {where}
+        GROUP BY caneca_qr
+        ORDER BY CASE caneca_qr
+            WHEN 'blanca' THEN 1
+            WHEN 'verde' THEN 2
+            WHEN 'negra' THEN 3
+            ELSE 4
+        END
+        """,
+        tuple(params),
+    )
+
+
+def ranking_tabla() -> pd.DataFrame:
+    """Tabla de ranking: usuario, intentos, aciertos, desaciertos, puntos."""
+    df = _query(
+        """
+        SELECT
+            COALESCE(c.nombre, r.id_colaborador) AS usuario,
+            c.username_telegram,
+            COUNT(r.id) AS intentos,
+            SUM(CASE WHEN r.resultado_intento = 'correcto' THEN 1 ELSE 0 END) AS aciertos,
+            SUM(CASE WHEN r.resultado_intento = 'incorrecto' THEN 1 ELSE 0 END) AS desaciertos,
+            COALESCE(p.puntos_totales, 0) AS puntos
+        FROM registro_intentos r
+        LEFT JOIN colaboradores c ON c.id_colaborador = r.id_colaborador
+        LEFT JOIN puntos_colaborador p ON p.id_colaborador = r.id_colaborador
+        GROUP BY r.id_colaborador, c.nombre, c.username_telegram, p.puntos_totales
+        ORDER BY puntos DESC, aciertos DESC, intentos DESC
+        """
+    )
+    if not df.empty and "username_telegram" in df.columns:
+        mask = df["username_telegram"].notna() & (df["username_telegram"] != "")
+        df.loc[mask, "usuario"] = (
+            df.loc[mask, "usuario"] + " (@" + df.loc[mask, "username_telegram"] + ")"
+        )
+    return df.drop(columns=["username_telegram"], errors="ignore")
+
+
 def ranking_ecopuntos(limit: int = 10) -> pd.DataFrame:
     df = ranking_ecopuntos_detalle()
     if limit and len(df) > limit:
@@ -220,19 +309,70 @@ def intentos_de_colaborador(id_colaborador: str, limit: int = 15) -> pd.DataFram
     return df
 
 
-def intentos_en_el_tiempo() -> pd.DataFrame:
+def intentos_en_el_tiempo(
+    area: str | None = None,
+    id_colaborador: str | None = None,
+    id_caneca: str | None = None,
+) -> pd.DataFrame:
+    conditions: list[str] = []
+    params: list[str] = []
+    if area:
+        conditions.append("area = ?")
+        params.append(area)
+    if id_colaborador:
+        conditions.append("id_colaborador = ?")
+        params.append(id_colaborador)
+    if id_caneca:
+        conditions.append("id_caneca = ?")
+        params.append(id_caneca)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     return _query(
-        """
+        f"""
         SELECT
             date(fecha_hora_evento) AS fecha,
             SUM(CASE WHEN resultado_intento = 'correcto' THEN 1 ELSE 0 END) AS correctos,
             SUM(CASE WHEN resultado_intento = 'incorrecto' THEN 1 ELSE 0 END) AS incorrectos,
             COUNT(*) AS total
         FROM registro_intentos
+        {where}
         GROUP BY date(fecha_hora_evento)
         ORDER BY fecha
-        """
+        """,
+        tuple(params),
     )
+
+
+def opciones_filtro_actividad() -> dict[str, pd.DataFrame]:
+    """Listas para segmentar la actividad diaria por área, usuario y caneca."""
+    return {
+        "areas": _query(
+            """
+            SELECT DISTINCT area
+            FROM registro_intentos
+            WHERE area IS NOT NULL AND area != ''
+            ORDER BY area
+            """
+        ),
+        "colaboradores": _query(
+            """
+            SELECT DISTINCT
+                r.id_colaborador,
+                COALESCE(c.nombre, r.id_colaborador) AS colaborador,
+                c.username_telegram
+            FROM registro_intentos r
+            LEFT JOIN colaboradores c ON c.id_colaborador = r.id_colaborador
+            ORDER BY colaborador
+            """
+        ),
+        "canecas": _query(
+            """
+            SELECT DISTINCT id_caneca, caneca_qr, area
+            FROM registro_intentos
+            WHERE id_caneca IS NOT NULL AND id_caneca != ''
+            ORDER BY id_caneca
+            """
+        ),
+    }
 
 
 def ultimos_intentos(limit: int = 20) -> pd.DataFrame:

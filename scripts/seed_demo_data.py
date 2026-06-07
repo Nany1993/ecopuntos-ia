@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import random
 import uuid
 from datetime import datetime, timedelta
@@ -165,12 +164,12 @@ def generar_intentos(db: SQLiteDatabase, colaboradores: list[dict]) -> int:
                     """
                     INSERT INTO registro_intentos (
                         id_sesion, numero_intento, fecha_hora_evento, id_colaborador,
-                        id_caneca, caneca_qr, area, tipos_residuo_permitidos,
+                        id_caneca, caneca_qr, area,
                         prediccion_ia, nivel_confianza, explicacion_breve,
                         resultado_intento, mensaje_enviado, confirmacion_deposito,
                         tiempo_respuesta_ms, estado_sesion, proveedor_ia,
                         respaldo_activado, acierto_primera, puntos_otorgados
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
                     """,
                     (
                         id_sesion,
@@ -180,7 +179,6 @@ def generar_intentos(db: SQLiteDatabase, colaboradores: list[dict]) -> int:
                         caneca["id_caneca"],
                         color_caneca,
                         caneca["area"],
-                        json.dumps(caneca["tipos_residuo_permitidos"], ensure_ascii=False),
                         prediccion,
                         confianza,
                         random.choice(EXPLICACIONES[prediccion]),

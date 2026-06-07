@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import atexit
 import logging
+import os
 import re
+import sys
+from pathlib import Path
 
 from telegram import Update
+from telegram.error import Conflict
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -21,6 +27,76 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 CANECA_PATTERN = re.compile(r"CAN-[A-Z]+-\d+", re.IGNORECASE)
+LOCK_PATH = Path(settings.sqlite_path).parent / "bot.lock"
+INTERVALO_CIERRE_SESIONES_SEG = 60
+
+
+async def _iniciar_monitor_sesiones(app: Application) -> None:
+    async def _loop_monitor() -> None:
+        while True:
+            await asyncio.sleep(INTERVALO_CIERRE_SESIONES_SEG)
+            try:
+                for id_colaborador, mensaje in app.bot_data["service"].cerrar_sesiones_expiradas():
+                    try:
+                        await app.bot.send_message(
+                            chat_id=int(id_colaborador),
+                            text=mensaje,
+                            parse_mode="Markdown",
+                        )
+                    except Exception:
+                        logger.exception(
+                            "No se pudo notificar cierre de sesión a %s", id_colaborador
+                        )
+            except Exception:
+                logger.exception("Error en monitor de sesiones expiradas")
+
+    asyncio.create_task(_loop_monitor())
+
+
+def _proceso_activo(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _liberar_lock() -> None:
+    try:
+        LOCK_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _adquirir_lock() -> None:
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if LOCK_PATH.exists():
+        try:
+            pid_previo = int(LOCK_PATH.read_text(encoding="utf-8").strip())
+        except ValueError:
+            pid_previo = 0
+        if _proceso_activo(pid_previo) and pid_previo != os.getpid():
+            logger.error(
+                "Bot ya en ejecucion (PID %s). Cierra la otra terminal o ejecuta: .\\scripts\\stop_bot.ps1",
+                pid_previo,
+            )
+            sys.exit(1)
+        _liberar_lock()
+
+    LOCK_PATH.write_text(str(os.getpid()), encoding="utf-8")
+    atexit.register(_liberar_lock)
+
+
+async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if isinstance(context.error, Conflict):
+        logger.error(
+            "409 Conflict: hay otra instancia del bot con el mismo token. "
+            "Ejecuta .\\scripts\\stop_bot.ps1 y vuelve a iniciar."
+        )
+        return
+    logger.exception("Error en el bot", exc_info=context.error)
 
 
 def _extraer_id_caneca(texto: str) -> str | None:
@@ -68,7 +144,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not id_caneca:
         await update.message.reply_text(
-            "👋 Bienvenido a *SmartSort EcoEnterprise*.\n\n"
+            "👋 Bienvenido a *ECOPUNTOS IA*.\n\n"
             "Escanea el QR de una caneca para iniciar, o usa:\n"
             "`/start CAN-BLANCA-01`\n\n"
             "Comandos:\n"
@@ -91,20 +167,16 @@ async def cmd_canecas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "📋 *Cómo usar SmartSort*\n\n"
+        "📋 *Cómo usar ECOPUNTOS IA*\n\n"
         "1. Escanea el QR de la caneca donde piensas depositar.\n"
         "2. Envía una foto del residuo.\n"
-        "3. Recibe recomendación inmediata.\n"
+        "3. El *agente IA* clasifica según la Resolución 2184 de 2019 (Código de Colores Colombia).\n"
         "4. Si es correcto, confirma el depósito y gana *EcoPuntos* (acierto a la 1ra).\n"
-        "5. Si es incorrecto, escanea la caneca recomendada y reintenta.\n\n"
+        "5. Si es incorrecto, escanea la caneca recomendada — *no hace falta otra foto*.\n\n"
         "Comandos:\n"
         "• /puntos — ver tus EcoPuntos\n"
         "• /ranking — tabla de líderes\n"
-        "• /canecas — ubicaciones\n\n"
-        "Código de colores Colombia:\n"
-        "⚪ Blanca — papel/cartón\n"
-        "🟢 Verde — plástico/vidrio/metal\n"
-        "⚫ Negra — no aprovechables",
+        "• /canecas — ubicaciones",
         parse_mode="Markdown",
     )
 
@@ -174,7 +246,7 @@ def build_application() -> Application:
     if not settings.telegram_bot_token:
         raise ValueError("TELEGRAM_BOT_TOKEN no configurado en .env")
 
-    app = Application.builder().token(settings.telegram_bot_token).build()
+    app = Application.builder().token(settings.telegram_bot_token).post_init(_iniciar_monitor_sesiones).build()
     app.bot_data["service"] = SessionService()
 
     app.add_handler(CommandHandler("start", cmd_start))
@@ -184,14 +256,16 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("ayuda", cmd_ayuda))
     app.add_handler(MessageHandler(filters.PHOTO, on_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+    app.add_error_handler(_on_error)
 
     return app
 
 
 def main() -> None:
+    _adquirir_lock()
     app = build_application()
-    logger.info("SmartSort bot iniciado (polling)...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("ECOPUNTOS IA - bot iniciado (polling)...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
 if __name__ == "__main__":

@@ -15,5 +15,7 @@ if [ ! -f ".env" ]; then
   exit 1
 fi
 
+bash "$(dirname "$0")/stop_bot.sh"
+
 echo "ECOPUNTOS IA - bot Telegram (Ctrl+C para detener)"
 .venv/bin/python -m src.bot.telegram_bot

@@ -1,21 +1,13 @@
--- SmartSort — Esquema SQLite (piloto local)
+-- ECOPUNTOS IA — Esquema SQLite (piloto local)
 
 CREATE TABLE IF NOT EXISTS catalogo_canecas (
     id_caneca TEXT PRIMARY KEY,
     area TEXT NOT NULL,
     color_caneca TEXT NOT NULL CHECK (color_caneca IN ('blanca', 'verde', 'negra')),
-    tipos_residuo_permitidos TEXT NOT NULL,
     estado_caneca TEXT NOT NULL DEFAULT 'activa',
     latitud REAL,
     longitud REAL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS reglas_residuos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tipo_residuo TEXT NOT NULL UNIQUE,
-    caneca_recomendada TEXT NOT NULL,
-    mensaje_educativo TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sesiones (
@@ -38,7 +30,6 @@ CREATE TABLE IF NOT EXISTS registro_intentos (
     id_caneca TEXT NOT NULL,
     caneca_qr TEXT NOT NULL,
     area TEXT NOT NULL,
-    tipos_residuo_permitidos TEXT NOT NULL,
     prediccion_ia TEXT,
     nivel_confianza REAL,
     explicacion_breve TEXT,

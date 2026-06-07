@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     maximo_intentos: int = 3
     tiempo_reintento_seg: int = 300
     tiempo_maximo_sesion_min: int = 10
+    tiempo_confirmacion_min: int = 15
     nivel_confianza_minimo: float = 0.6
     sla_respuesta_seg: int = 5
 

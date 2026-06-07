@@ -9,20 +9,7 @@ from typing import Any
 
 from src.config import settings
 from src.models import CANECAS_COLORES_VALIDOS, ClasificacionIA, ColorCaneca
-
-PROMPT_SISTEMA = """
-Eres un clasificador de residuos para oficinas en Colombia según el Código de Colores:
-- blanca: papel, cartón, material reciclable limpio no plástico/metal/vidrio
-- verde: plásticos, vidrio, metales, envases reciclables
-- negra: residuos no aprovechables, orgánicos contaminados, servilletas usadas, etc.
-
-Responde SOLO con JSON válido (sin markdown) con esta estructura exacta:
-{
-  "prediccion_ia": "blanca|verde|negra",
-  "nivel_confianza": 0.0-1.0,
-  "explicacion_breve": "máximo 120 caracteres en español"
-}
-"""
+from src.services.normativa_prompt import PROMPT_SISTEMA
 
 
 def _normalizar_color(valor: str) -> ColorCaneca | None:

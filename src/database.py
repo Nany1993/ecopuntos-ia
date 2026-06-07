@@ -2,14 +2,40 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
 
 from src.config import settings
-from src.models import Caneca, Colaborador, PuntosColaborador, RegistroIntento, ReglaResiduo, Sesion
+from src.models import Caneca, Colaborador, ESTADOS_SESION_CERRADOS, PuntosColaborador, RegistroIntento, Sesion, EstadoSesion
+
+
+def _row_to_intento(row) -> RegistroIntento:
+    return RegistroIntento(
+        id_sesion=row["id_sesion"],
+        numero_intento=row["numero_intento"],
+        fecha_hora_evento=datetime.fromisoformat(str(row["fecha_hora_evento"]).replace("Z", "")),
+        id_colaborador=row["id_colaborador"],
+        id_caneca=row["id_caneca"],
+        caneca_qr=row["caneca_qr"],
+        area=row["area"],
+        prediccion_ia=row["prediccion_ia"],
+        nivel_confianza=row["nivel_confianza"],
+        explicacion_breve=row["explicacion_breve"],
+        resultado_intento=row["resultado_intento"],
+        mensaje_enviado=row["mensaje_enviado"],
+        confirmacion_deposito=bool(row["confirmacion_deposito"])
+        if row["confirmacion_deposito"] is not None
+        else None,
+        tiempo_respuesta_ms=row["tiempo_respuesta_ms"],
+        estado_sesion=EstadoSesion(row["estado_sesion"]),
+        proveedor_ia=row["proveedor_ia"],
+        respaldo_activado=bool(row["respaldo_activado"]),
+        codigo_error=row["codigo_error"],
+        acierto_primera=bool(row["acierto_primera"]) if "acierto_primera" in row.keys() else False,
+        puntos_otorgados=row["puntos_otorgados"] if "puntos_otorgados" in row.keys() else 0,
+    )
 
 
 class Database(ABC):
@@ -23,7 +49,13 @@ class Database(ABC):
     def list_canecas(self, color: str | None = None) -> list[Caneca]: ...
 
     @abstractmethod
-    def get_regla_residuo(self, tipo_residuo: str) -> ReglaResiduo | None: ...
+    def listar_ids_canecas(self) -> list[str]: ...
+
+    @abstractmethod
+    def existe_caneca(self, id_caneca: str) -> bool: ...
+
+    @abstractmethod
+    def crear_caneca(self, caneca: Caneca) -> None: ...
 
     @abstractmethod
     def save_sesion(self, sesion: Sesion) -> None: ...
@@ -35,7 +67,13 @@ class Database(ABC):
     def get_sesion_activa_colaborador(self, id_colaborador: str) -> Sesion | None: ...
 
     @abstractmethod
+    def list_sesiones_activas(self) -> list[Sesion]: ...
+
+    @abstractmethod
     def save_intento(self, intento: RegistroIntento) -> None: ...
+
+    @abstractmethod
+    def get_ultimo_intento_sesion(self, id_sesion: str) -> RegistroIntento | None: ...
 
     @abstractmethod
     def get_puntos_colaborador(self, id_colaborador: str) -> "PuntosColaborador": ...
@@ -66,12 +104,6 @@ class Database(ABC):
 
     @abstractmethod
     def seed_if_empty(self) -> None: ...
-
-
-def _parse_tipos(value: str | list) -> list[str]:
-    if isinstance(value, list):
-        return value
-    return json.loads(value)
 
 
 class SQLiteDatabase(Database):
@@ -121,6 +153,18 @@ class SQLiteDatabase(Database):
                 )
                 """
             )
+            conn.execute("DROP TABLE IF EXISTS reglas_residuos")
+            caneca_cols = {row[1] for row in conn.execute("PRAGMA table_info(catalogo_canecas)")}
+            if "tipos_residuo_permitidos" in caneca_cols:
+                try:
+                    conn.execute("ALTER TABLE catalogo_canecas DROP COLUMN tipos_residuo_permitidos")
+                except sqlite3.OperationalError:
+                    pass
+            if "tipos_residuo_permitidos" in cols:
+                try:
+                    conn.execute("ALTER TABLE registro_intentos DROP COLUMN tipos_residuo_permitidos")
+                except sqlite3.OperationalError:
+                    pass
             conn.commit()
 
     def get_caneca(self, id_caneca: str) -> Caneca | None:
@@ -135,7 +179,6 @@ class SQLiteDatabase(Database):
             id_caneca=row["id_caneca"],
             area=row["area"],
             color_caneca=row["color_caneca"],
-            tipos_residuo_permitidos=_parse_tipos(row["tipos_residuo_permitidos"]),
             estado_caneca=row["estado_caneca"],
             latitud=row["latitud"],
             longitud=row["longitud"],
@@ -154,7 +197,6 @@ class SQLiteDatabase(Database):
                 id_caneca=r["id_caneca"],
                 area=r["area"],
                 color_caneca=r["color_caneca"],
-                tipos_residuo_permitidos=_parse_tipos(r["tipos_residuo_permitidos"]),
                 estado_caneca=r["estado_caneca"],
                 latitud=r["latitud"],
                 longitud=r["longitud"],
@@ -162,19 +204,36 @@ class SQLiteDatabase(Database):
             for r in rows
         ]
 
-    def get_regla_residuo(self, tipo_residuo: str) -> ReglaResiduo | None:
+    def listar_ids_canecas(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id_caneca FROM catalogo_canecas ORDER BY id_caneca"
+            ).fetchall()
+        return [row["id_caneca"] for row in rows]
+
+    def existe_caneca(self, id_caneca: str) -> bool:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM reglas_residuos WHERE LOWER(tipo_residuo) = LOWER(?)",
-                (tipo_residuo,),
+                "SELECT 1 FROM catalogo_canecas WHERE id_caneca = ? LIMIT 1",
+                (id_caneca,),
             ).fetchone()
-        if not row:
-            return None
-        return ReglaResiduo(
-            tipo_residuo=row["tipo_residuo"],
-            caneca_recomendada=row["caneca_recomendada"],
-            mensaje_educativo=row["mensaje_educativo"],
-        )
+        return row is not None
+
+    def crear_caneca(self, caneca: Caneca) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO catalogo_canecas (id_caneca, area, color_caneca, estado_caneca)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    caneca.id_caneca,
+                    caneca.area,
+                    caneca.color_caneca,
+                    caneca.estado_caneca or "activa",
+                ),
+            )
+            conn.commit()
 
     def save_sesion(self, sesion: Sesion) -> None:
         with self._connect() as conn:
@@ -209,12 +268,7 @@ class SQLiteDatabase(Database):
         return self._row_to_sesion(row) if row else None
 
     def get_sesion_activa_colaborador(self, id_colaborador: str) -> Sesion | None:
-        estados_cerrados = (
-            "CERRADA_EXITOSA",
-            "CERRADA_POR_INACTIVIDAD",
-            "CERRADA_POR_MAXIMO_INTENTOS",
-            "CERRADA_POR_ERROR_TECNICO",
-        )
+        estados_cerrados = tuple(e.value for e in ESTADOS_SESION_CERRADOS)
         placeholders = ",".join("?" * len(estados_cerrados))
         with self._connect() as conn:
             row = conn.execute(
@@ -229,18 +283,32 @@ class SQLiteDatabase(Database):
             ).fetchone()
         return self._row_to_sesion(row) if row else None
 
+    def list_sesiones_activas(self) -> list[Sesion]:
+        estados_cerrados = tuple(e.value for e in ESTADOS_SESION_CERRADOS)
+        placeholders = ",".join("?" * len(estados_cerrados))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM sesiones
+                WHERE estado_sesion NOT IN ({placeholders})
+                ORDER BY actualizada_en ASC
+                """,
+                estados_cerrados,
+            ).fetchall()
+        return [self._row_to_sesion(row) for row in rows]
+
     def save_intento(self, intento: RegistroIntento) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO registro_intentos (
                     id_sesion, numero_intento, fecha_hora_evento, id_colaborador,
-                    id_caneca, caneca_qr, area, tipos_residuo_permitidos,
+                    id_caneca, caneca_qr, area,
                     prediccion_ia, nivel_confianza, explicacion_breve,
                     resultado_intento, mensaje_enviado, confirmacion_deposito,
                     tiempo_respuesta_ms, estado_sesion, proveedor_ia,
                     respaldo_activado, codigo_error, acierto_primera, puntos_otorgados
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     intento.id_sesion,
@@ -250,7 +318,6 @@ class SQLiteDatabase(Database):
                     intento.id_caneca,
                     intento.caneca_qr,
                     intento.area,
-                    json.dumps(intento.tipos_residuo_permitidos, ensure_ascii=False),
                     intento.prediccion_ia,
                     intento.nivel_confianza,
                     intento.explicacion_breve,
@@ -267,6 +334,19 @@ class SQLiteDatabase(Database):
                 ),
             )
             conn.commit()
+
+    def get_ultimo_intento_sesion(self, id_sesion: str) -> RegistroIntento | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM registro_intentos
+                WHERE id_sesion = ?
+                ORDER BY numero_intento DESC
+                LIMIT 1
+                """,
+                (id_sesion,),
+            ).fetchone()
+        return _row_to_intento(row) if row else None
 
     def get_puntos_colaborador(self, id_colaborador: str) -> PuntosColaborador:
         with self._connect() as conn:
@@ -445,25 +525,17 @@ class SQLiteDatabase(Database):
             count = conn.execute("SELECT COUNT(*) FROM catalogo_canecas").fetchone()[0]
             if count > 0:
                 return
-        from src.seed_data import CANECAS_SEED, REGLAS_SEED
+        from src.seed_data import CANECAS_SEED
 
         with self._connect() as conn:
             for c in CANECAS_SEED:
                 conn.execute(
                     """
                     INSERT INTO catalogo_canecas (
-                        id_caneca, area, color_caneca, tipos_residuo_permitidos, estado_caneca
-                    ) VALUES (?, ?, ?, ?, 'activa')
+                        id_caneca, area, color_caneca, estado_caneca
+                    ) VALUES (?, ?, ?, 'activa')
                     """,
-                    (c["id_caneca"], c["area"], c["color_caneca"], json.dumps(c["tipos_residuo_permitidos"])),
-                )
-            for r in REGLAS_SEED:
-                conn.execute(
-                    """
-                    INSERT INTO reglas_residuos (tipo_residuo, caneca_recomendada, mensaje_educativo)
-                    VALUES (?, ?, ?)
-                    """,
-                    (r["tipo_residuo"], r["caneca_recomendada"], r["mensaje_educativo"]),
+                    (c["id_caneca"], c["area"], c["color_caneca"]),
                 )
             conn.commit()
 
@@ -510,7 +582,6 @@ class SupabaseDatabase(Database):
             id_caneca=row["id_caneca"],
             area=row["area"],
             color_caneca=row["color_caneca"],
-            tipos_residuo_permitidos=row["tipos_residuo_permitidos"],
             estado_caneca=row["estado_caneca"],
             latitud=row.get("latitud"),
             longitud=row.get("longitud"),
@@ -526,7 +597,6 @@ class SupabaseDatabase(Database):
                 id_caneca=r["id_caneca"],
                 area=r["area"],
                 color_caneca=r["color_caneca"],
-                tipos_residuo_permitidos=r["tipos_residuo_permitidos"],
                 estado_caneca=r["estado_caneca"],
                 latitud=r.get("latitud"),
                 longitud=r.get("longitud"),
@@ -534,22 +604,37 @@ class SupabaseDatabase(Database):
             for r in res.data
         ]
 
-    def get_regla_residuo(self, tipo_residuo: str) -> ReglaResiduo | None:
+    def listar_ids_canecas(self) -> list[str]:
         res = (
-            self.client.table("reglas_residuos")
-            .select("*")
-            .ilike("tipo_residuo", tipo_residuo)
+            self.client.table("catalogo_canecas")
+            .select("id_caneca")
+            .order("id_caneca")
+            .execute()
+        )
+        return [row["id_caneca"] for row in res.data]
+
+    def existe_caneca(self, id_caneca: str) -> bool:
+        res = (
+            self.client.table("catalogo_canecas")
+            .select("id_caneca")
+            .eq("id_caneca", id_caneca)
             .limit(1)
             .execute()
         )
-        if not res.data:
-            return None
-        row = res.data[0]
-        return ReglaResiduo(
-            tipo_residuo=row["tipo_residuo"],
-            caneca_recomendada=row["caneca_recomendada"],
-            mensaje_educativo=row["mensaje_educativo"],
-        )
+        return bool(res.data)
+
+    def crear_caneca(self, caneca: Caneca) -> None:
+        payload = {
+            "id_caneca": caneca.id_caneca,
+            "area": caneca.area,
+            "color_caneca": caneca.color_caneca,
+            "estado_caneca": caneca.estado_caneca or "activa",
+        }
+        if caneca.latitud is not None:
+            payload["latitud"] = caneca.latitud
+        if caneca.longitud is not None:
+            payload["longitud"] = caneca.longitud
+        self.client.table("catalogo_canecas").insert(payload).execute()
 
     def save_sesion(self, sesion: Sesion) -> None:
         payload = {
@@ -569,12 +654,7 @@ class SupabaseDatabase(Database):
         return self._row_to_sesion(res.data[0]) if res.data else None
 
     def get_sesion_activa_colaborador(self, id_colaborador: str) -> Sesion | None:
-        estados_cerrados = [
-            "CERRADA_EXITOSA",
-            "CERRADA_POR_INACTIVIDAD",
-            "CERRADA_POR_MAXIMO_INTENTOS",
-            "CERRADA_POR_ERROR_TECNICO",
-        ]
+        estados_cerrados = [e.value for e in ESTADOS_SESION_CERRADOS]
         res = (
             self.client.table("sesiones")
             .select("*")
@@ -586,6 +666,17 @@ class SupabaseDatabase(Database):
         )
         return self._row_to_sesion(res.data[0]) if res.data else None
 
+    def list_sesiones_activas(self) -> list[Sesion]:
+        estados_cerrados = [e.value for e in ESTADOS_SESION_CERRADOS]
+        res = (
+            self.client.table("sesiones")
+            .select("*")
+            .not_.in_("estado_sesion", estados_cerrados)
+            .order("actualizada_en", desc=False)
+            .execute()
+        )
+        return [self._row_to_sesion(row) for row in res.data]
+
     def save_intento(self, intento: RegistroIntento) -> None:
         payload = {
             "id_sesion": intento.id_sesion,
@@ -595,7 +686,6 @@ class SupabaseDatabase(Database):
             "id_caneca": intento.id_caneca,
             "caneca_qr": intento.caneca_qr,
             "area": intento.area,
-            "tipos_residuo_permitidos": intento.tipos_residuo_permitidos,
             "prediccion_ia": intento.prediccion_ia,
             "nivel_confianza": intento.nivel_confianza,
             "explicacion_breve": intento.explicacion_breve,
@@ -609,6 +699,39 @@ class SupabaseDatabase(Database):
             "codigo_error": intento.codigo_error,
         }
         self.client.table("registro_intentos").insert(payload).execute()
+
+    def get_ultimo_intento_sesion(self, id_sesion: str) -> RegistroIntento | None:
+        res = (
+            self.client.table("registro_intentos")
+            .select("*")
+            .eq("id_sesion", id_sesion)
+            .order("numero_intento", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return None
+        row = res.data[0]
+        return RegistroIntento(
+            id_sesion=row["id_sesion"],
+            numero_intento=row["numero_intento"],
+            fecha_hora_evento=datetime.fromisoformat(row["fecha_hora_evento"].replace("Z", "")),
+            id_colaborador=row["id_colaborador"],
+            id_caneca=row["id_caneca"],
+            caneca_qr=row["caneca_qr"],
+            area=row["area"],
+            prediccion_ia=row.get("prediccion_ia"),
+            nivel_confianza=row.get("nivel_confianza"),
+            explicacion_breve=row.get("explicacion_breve"),
+            resultado_intento=row["resultado_intento"],
+            mensaje_enviado=row["mensaje_enviado"],
+            confirmacion_deposito=row.get("confirmacion_deposito"),
+            tiempo_respuesta_ms=row["tiempo_respuesta_ms"],
+            estado_sesion=EstadoSesion(row["estado_sesion"]),
+            proveedor_ia=row.get("proveedor_ia"),
+            respaldo_activado=bool(row.get("respaldo_activado", False)),
+            codigo_error=row.get("codigo_error"),
+        )
 
     def get_puntos_colaborador(self, id_colaborador: str) -> PuntosColaborador:
         res = (
@@ -673,10 +796,9 @@ class SupabaseDatabase(Database):
         res = self.client.table("catalogo_canecas").select("id_caneca", count="exact").execute()
         if res.count and res.count > 0:
             return
-        from src.seed_data import CANECAS_SEED, REGLAS_SEED
+        from src.seed_data import CANECAS_SEED
 
         self.client.table("catalogo_canecas").insert(CANECAS_SEED).execute()
-        self.client.table("reglas_residuos").insert(REGLAS_SEED).execute()
 
     @staticmethod
     def _row_to_sesion(row: dict) -> Sesion:

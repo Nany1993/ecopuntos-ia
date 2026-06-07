@@ -15,6 +15,9 @@ if (-not (Test-Path ".env")) {
     exit 1
 }
 
+# Evitar error 409: una sola instancia de polling por token
+& "$PSScriptRoot\stop_bot.ps1"
+
 Write-Host "ECOPUNTOS IA - bot Telegram..." -ForegroundColor Cyan
 Write-Host "Usuario bot: definido en TELEGRAM_BOT_USERNAME (.env)" -ForegroundColor DarkGray
 Write-Host "Ctrl+C para detener" -ForegroundColor DarkGray
