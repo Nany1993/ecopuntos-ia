@@ -2,6 +2,8 @@
 
 Prototipo IoT para **segregación adecuada de residuos** en oficinas, con guía en tiempo real, trazabilidad y gamificación (EcoPuntos).
 
+> **Ejecución local:** Este prototipo está pensado para correr en **localhost**. Cada persona que clone el repositorio debe crear su propio bot en Telegram, obtener su API key de Gemini y configurar un archivo `.env` local. No hace falta servidor en la nube para probarlo.
+
 ## ¿Por qué es un sistema IoT?
 
 El objetivo no es automatizar la recolección, sino **reducir errores de segregación en la fuente** (Resolución 2184 de 2019 — código blanco, verde, negro).
@@ -34,6 +36,32 @@ El objetivo no es automatizar la recolección, sino **reducir errores de segrega
 
 ---
 
+## Prueba en localhost (resumen)
+
+Checklist para quien clone el repo por primera vez:
+
+| Paso | Acción |
+|------|--------|
+| 1 | `git clone https://github.com/Nany1993/ecopuntos-ia.git` y `cd ecopuntos-ia` |
+| 2 | Ejecutar `.\scripts\setup.ps1` (Windows) o `./scripts/setup.sh` (Linux/macOS) |
+| 3 | Editar `.env` con `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` y `GEMINI_API_KEY` |
+| 4 | **Terminal 1:** arrancar el bot (`.\scripts\start.ps1` o `./scripts/start.sh`) |
+| 5 | **Terminal 2:** arrancar el dashboard (`.\scripts\start_dashboard.ps1` o `./scripts/start_dashboard.sh`) |
+| 6 | Abrir **http://127.0.0.1:8501** en el navegador |
+| 7 | En Telegram: `/start CAN-BLANCA-01` → enviar **foto** de un residuo → confirmar con **`sí`** si acertaste |
+
+**Componentes opcionales:**
+
+| Componente | ¿Es obligatorio? | Notas |
+|------------|------------------|-------|
+| Bot Telegram | Sí, para probar el flujo completo | Debe quedar corriendo en una terminal |
+| Dashboard | No | Puedes usar solo el bot; el dashboard lee la misma base SQLite |
+| Datos demo | No | `python -m scripts.seed_demo_data --limpiar` llena el dashboard sin usar Telegram |
+
+> **QR no incluidos en Git:** la carpeta `output/qr/` está en `.gitignore`. El script de setup los genera automáticamente en tu máquina. Si cambias `TELEGRAM_BOT_USERNAME`, vuelve a ejecutar `python -m scripts.generate_qr`.
+
+---
+
 ## Instalación rápida (clonar y ejecutar)
 
 ### 1. Clonar el repositorio
@@ -54,7 +82,7 @@ cd ecopuntos-ia
 **Linux / macOS:**
 
 ```bash
-chmod +x scripts/setup.sh scripts/start.sh scripts/start_dashboard.sh
+chmod +x scripts/*.sh
 ./scripts/setup.sh
 ```
 
@@ -95,6 +123,13 @@ GEMINI_API_KEY=AIza...                           # Google AI Studio
 
 Abre en el navegador: **http://127.0.0.1:8501**
 
+**Detener servicios:**
+
+| Windows | Linux / macOS |
+|---------|---------------|
+| `.\scripts\stop_bot.ps1` | `./scripts/stop_bot.sh` |
+| `.\scripts\stop_dashboard.ps1` | `./scripts/stop_dashboard.sh` |
+
 ---
 
 ## Probar en Telegram
@@ -106,6 +141,45 @@ Abre en el navegador: **http://127.0.0.1:8501**
 **Comandos del bot:** `/puntos` · `/ranking` · `/canecas` · `/ayuda`
 
 **Canecas del piloto:** `CAN-BLANCA-01/02` · `CAN-VERDE-01/02` · `CAN-NEGRA-01/02`
+
+Los PNG están en `output/qr/`. También puedes abrirlos desde el dashboard (página *Inventario de canecas*).
+
+---
+
+## Dashboard web (localhost)
+
+URL: **http://127.0.0.1:8501** — requiere la terminal del dashboard activa.
+
+El dashboard tiene tres páginas en el menú lateral:
+
+| Página | Contenido |
+|--------|-----------|
+| **Indicadores globales** | KPIs de segregación, gráficos por caneca, tasa de acierto, actividad diaria con filtros |
+| **Ranking EcoPuntos** | Tarjetas de participación, gráfico de aciertos/desaciertos por color, tabla ranking por usuario |
+| **Inventario de canecas** | Catálogo con filtros, enlaces a Telegram, visor de QR y formulario **Registrar nueva caneca** |
+
+### Registrar una caneca nueva
+
+1. Abre *Inventario de canecas* en el dashboard.
+2. Expande **Registrar nueva caneca**.
+3. Elige color, escribe el área y revisa el ID sugerido (formato `CAN-BLANCA-03`).
+4. Pulsa **Crear caneca y generar QR**.
+
+La caneca queda en la base de datos local y el PNG se guarda en `output/qr/`. El enlace de Telegram funciona en cuanto el bot esté corriendo.
+
+### Ver datos sin usar Telegram
+
+Para explorar el dashboard con datos de ejemplo:
+
+```bash
+# Windows
+.venv\Scripts\python.exe -m scripts.seed_demo_data --limpiar
+
+# Linux / macOS
+.venv/bin/python -m scripts.seed_demo_data --limpiar
+```
+
+Luego recarga http://127.0.0.1:8501.
 
 ---
 
@@ -196,6 +270,24 @@ python -m scripts.seed_demo_data --limpiar
 
 ---
 
+## Comandos útiles en localhost
+
+Comandos desde la raíz del proyecto (con el entorno virtual activo o usando la ruta a `python` del `.venv`):
+
+| Acción | Windows | Linux / macOS |
+|--------|---------|---------------|
+| Instalación inicial | `.\scripts\setup.ps1` | `./scripts/setup.sh` |
+| Iniciar bot | `.\scripts\start.ps1` | `./scripts/start.sh` |
+| Iniciar dashboard | `.\scripts\start_dashboard.ps1` | `./scripts/start_dashboard.sh` |
+| Detener bot | `.\scripts\stop_bot.ps1` | `./scripts/stop_bot.sh` |
+| Detener dashboard | `.\scripts\stop_dashboard.ps1` | `./scripts/stop_dashboard.sh` |
+| Regenerar QR | `.venv\Scripts\python.exe -m scripts.generate_qr` | `.venv/bin/python -m scripts.generate_qr` |
+| Datos demo | `.venv\Scripts\python.exe -m scripts.seed_demo_data --limpiar` | `.venv/bin/python -m scripts.seed_demo_data --limpiar` |
+| Probar flujo de sesión | `.venv\Scripts\python.exe -m scripts.test_sesion_flujo` | `.venv/bin/python -m scripts.test_sesion_flujo` |
+| Reiniciar base de datos | `.venv\Scripts\python.exe -m scripts.init_db` | `.venv/bin/python -m scripts.init_db` |
+
+---
+
 ## Arquitectura
 
 ```
@@ -213,11 +305,12 @@ Caneca física (QR) → Smartphone (cámara)
 | Componente | Descripción |
 |------------|-------------|
 | Bot Telegram | Captura fotos, feedback y EcoPuntos |
-| Clasificación IA | Gemini 2.5 Flash (+ GPT opcional) |
-| Motor de sesiones | Reglas, reintentos, comparación caneca vs predicción |
+| Clasificación IA | Gemini 2.5 Flash (+ GPT opcional), normativa Resolución 2184 |
+| Motor de sesiones | Reintentos sin nueva foto, confirmación, timeout 15 min |
 | SQLite | Persistencia local (`data/smartsort.db`) |
-| Dashboard | KPIs, ranking EcoPuntos, gráficos (Streamlit) |
-| Generador QR | 6 canecas del piloto en `output/qr/` |
+| Dashboard multipágina | Indicadores, ranking EcoPuntos e inventario (Streamlit) |
+| Generador QR | Script CLI + alta desde dashboard; PNG en `output/qr/` |
+| Catálogo de canecas | Alta programática con ID sugerido (`caneca_catalog.py`) |
 
 ---
 
@@ -296,7 +389,9 @@ Capa 5 (complemento):       Auditoría humana periódica            → validaci
 | `Entorno virtual no encontrado` | Ejecuta `.\scripts\setup.ps1` o `./scripts/setup.sh` |
 | `Falta .env` | Copia `.env.example` a `.env` y agrega tus claves |
 | Bot no responde | Verifica `TELEGRAM_BOT_TOKEN` y que la terminal del bot siga activa |
-| Error 409 Conflict (dos instancias) | Ejecuta `.\scripts\stop_bot.ps1` y luego **una sola vez** `.\scripts\start.ps1` |
+| Error 409 Conflict (dos instancias) | `.\scripts\stop_bot.ps1` (o `./scripts/stop_bot.sh`) y luego **una sola** instancia de start |
+| Dashboard no muestra cambios | `.\scripts\stop_dashboard.ps1` y reinicia `start_dashboard` |
+| QR no aparece en inventario | Ejecuta `python -m scripts.generate_qr` o crea la caneca desde el dashboard |
 | Error al clasificar imagen | Revisa `GEMINI_API_KEY` y conexión a internet |
 | QR abre otro bot | Corrige `TELEGRAM_BOT_USERNAME` en `.env` y ejecuta `python -m scripts.generate_qr` |
 | Dashboard vacío | Ejecuta `python -m scripts.seed_demo_data --limpiar` o usa el bot para generar datos reales |
@@ -309,24 +404,33 @@ Capa 5 (complemento):       Auditoría humana periódica            → validaci
 
 ```
 ecopuntos-ia/
-├── .env.example          # Plantilla de configuración (copiar a .env)
+├── .env.example              # Plantilla (copiar a .env)
 ├── requirements.txt
 ├── scripts/
-│   ├── setup.ps1 / setup.sh       # Instalación inicial
-│   ├── start.ps1 / start.sh       # Bot Telegram
-│   ├── start_dashboard.ps1 / .sh  # Dashboard web
+│   ├── setup.ps1 / setup.sh           # Instalación inicial
+│   ├── start.ps1 / start.sh           # Bot Telegram
+│   ├── start_dashboard.ps1 / .sh      # Dashboard web
+│   ├── stop_bot.ps1 / stop_bot.sh     # Detener bot
+│   ├── stop_dashboard.ps1 / .sh       # Detener dashboard
 │   ├── init_db.py
 │   ├── generate_qr.py
-│   └── seed_demo_data.py
+│   ├── seed_demo_data.py
+│   └── test_sesion_flujo.py           # Prueba del motor de sesiones
 ├── src/
 │   ├── bot/telegram_bot.py
-│   ├── dashboard/                 # Streamlit + Plotly
-│   ├── services/                  # IA, sesiones, EcoPuntos
+│   ├── dashboard/
+│   │   ├── app.py                     # Entrada Streamlit
+│   │   └── pages/                     # Indicadores, ranking, inventario
+│   ├── services/
+│   │   ├── classifier.py              # Clasificación IA
+│   │   ├── session_service.py         # Sesiones y EcoPuntos
+│   │   ├── caneca_catalog.py          # Alta de canecas
+│   │   └── qr_codes.py                # Generación de QR
 │   ├── database.py
 │   └── models.py
 ├── sql/schema_sqlite.sql
-├── data/                          # Se crea al iniciar (no se sube a Git)
-└── output/qr/                     # QR generados (no se sube a Git)
+├── data/                              # SQLite local (no se sube a Git)
+└── output/qr/                         # PNG de QR (no se sube a Git)
 ```
 
 ---
@@ -341,6 +445,9 @@ ecopuntos-ia/
 | `GEMINI_MODEL` | No | Por defecto `gemini-2.5-flash` |
 | `OPENAI_API_KEY` | No | Respaldo si Gemini falla |
 | `PUNTOS_ACIERTO_PRIMERA` | No | EcoPuntos por acierto 1ra (default: 10) |
+| `MAXIMO_INTENTOS` | No | Intentos por sesión (default: 3) |
+| `TIEMPO_CONFIRMACION_MIN` | No | Minutos para confirmar depósito (default: 15) |
+| `DATABASE_BACKEND` | No | `sqlite` (local) o `supabase` (avanzado) |
 | `SQLITE_PATH` | No | Ruta BD (default: `data/smartsort.db`) |
 
 > **Nunca subas `.env` a GitHub.** Contiene claves secretas. El archivo ya está en `.gitignore`.
@@ -350,3 +457,5 @@ ecopuntos-ia/
 ## Licencia y uso
 
 Proyecto académico / piloto IoT. Usa tus propias claves de Telegram y Gemini; cada persona que clone el repo debe crear su bot y su `.env`.
+
+**Repositorio:** [github.com/Nany1993/ecopuntos-ia](https://github.com/Nany1993/ecopuntos-ia)
