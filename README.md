@@ -39,11 +39,9 @@ El objetivo no es automatizar la recolección, sino **reducir errores de segrega
 ### 1. Clonar el repositorio
 
 ```bash
-git clone https://github.com/TU_USUARIO/ecopuntos-ia.git
+git clone https://github.com/Nany1993/ecopuntos-ia.git
 cd ecopuntos-ia
 ```
-
-*(Reemplaza la URL con la de tu repositorio en GitHub.)*
 
 ### 2. Instalar todo (un solo comando)
 
