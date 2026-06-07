@@ -1,0 +1,12 @@
+.env
+credentials/*.json
+!credentials/.gitkeep
+.venv/
+__pycache__/
+*.pyc
+data/
+output/
+*.db
+.DS_Store
+.idea/
+.vscode/
